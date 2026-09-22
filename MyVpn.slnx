@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/server/">
+    <Project Path="server/MyVpn.Server/MyVpn.Server.csproj">
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
+  </Folder>
+</Solution>

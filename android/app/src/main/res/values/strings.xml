@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">MyVpn</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting\u2026</string>
+    <string name="status_connected">Connected</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="scan_qr">Scan QR code</string>
+    <string name="paste_clipboard">Paste from clipboard</string>
+    <string name="configuration">WireGuard configuration</string>
+    <string name="config_hint">[Interface]\nPrivateKey = \u2026</string>
+    <string name="scan_prompt">Scan your VPN QR code</string>
+    <string name="clipboard_empty">Clipboard is empty</string>
+    <string name="need_config">Paste or scan a WireGuard configuration first.</string>
+    <string name="invalid_config">Invalid configuration: %1$s</string>
+    <string name="vpn_permission_denied">VPN permission was not granted.</string>
+    <string name="start_failed">Failed to start VPN: %1$s</string>
+    <string name="stop_failed">Failed to stop VPN: %1$s</string>
+    <string name="stats_format">\u2193 %1$s    \u2191 %2$s</string>
+    <string name="confirm_title">Connect to this server?</string>
+    <string name="confirm_message">%1$s\n\nOnly continue if this matches your VPN server.</string>
+    <string name="leak_hint">Tip: for leak protection, enable Always-on VPN and \"Block connections without VPN\" in Android settings.</string>
+    <string name="save_failed">Could not save the configuration securely: %1$s</string>
+    <string name="my_key_label">This device\'s public key</string>
+    <string name="key_none">(no key yet - tap Generate key, then give this public key to the server)</string>
+    <string name="generate_key">Generate key</string>
+    <string name="copy_key">Copy public key</string>
+    <string name="key_generated">New key generated. Paste the public key into the server\'s Add peer dialog.</string>
+    <string name="key_generate_failed">Could not generate a key: %1$s</string>
+    <string name="public_key_copied">Public key copied to the clipboard.</string>
+    <string name="need_key">Generate a key on this device first, then give its public key to the server.</string>
+    <string name="open_vpn_settings">Open VPN settings (enable Always-on + Block)</string>
+    <string name="open_vpn_settings_failed">Could not open the VPN settings screen.</string>
+</resources>
