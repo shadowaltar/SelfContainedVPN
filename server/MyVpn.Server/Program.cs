@@ -9,18 +9,24 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
-        // The VPN adapter/driver and the NAT/firewall setup require administrator rights. Rather
-        // than forcing elevation through the manifest (which stops Visual Studio from launching
-        // the app), the app elevates itself on startup. If the host already runs elevated - e.g.
-        // when Visual Studio is started as administrator - this is a no-op and debugging works.
-        if (!IsElevated())
+        if (args.Contains("--relay"))
+            return RunRelay(args);
+
+        // Only the native-WireGuard diagnostics need Windows administrator rights. The GUI (which
+        // drives the WSL server) and the WSL diagnostics run unelevated (least privilege).
+        var needsAdmin = args.Contains("--netcheck")
+                         || args.Contains("--hold-adapter")
+                         || args.Contains("--delete-driver")
+                         || (args.Any(a => a is "--diagnostics" or "--selftest") && !args.Contains("--wsl"));
+
+        if (needsAdmin && !IsElevated())
         {
             if (TryRelaunchElevated(args))
                 return 0;
 
             MessageBox.Show(
-                "MyVpn needs administrator rights to create the VPN adapter and configure networking.\n\n" +
-                "Run MyVpn.Server.exe as administrator, or start Visual Studio as administrator to debug.",
+                "This diagnostic needs administrator rights to create the WireGuard adapter and configure networking.\n\n" +
+                "Re-run it as administrator.",
                 "Administrator rights required",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
@@ -49,6 +55,43 @@ static class Program
         }
 
         return 0;
+    }
+
+    private static int RunRelay(string[] args)
+    {
+        var logPath = Path.Combine(Path.GetTempPath(), "myvpn-relay.log");
+        void Log(string message)
+        {
+            try { File.AppendAllText(logPath, $"{DateTime.Now:HH:mm:ss} {message}{Environment.NewLine}"); } catch { /* ignore */ }
+        }
+
+        int Get(string name, int fallback)
+        {
+            var i = Array.IndexOf(args, name);
+            return i >= 0 && i + 1 < args.Length && int.TryParse(args[i + 1], out var value) ? value : fallback;
+        }
+
+        Log("relay start: " + string.Join(' ', args));
+
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+        };
+
+        try
+        {
+            Services.UdpRelay.RunAsync(Get("--listen", 51820), Get("--target-port", 51820), cts.Token, Log)
+                .GetAwaiter().GetResult();
+            Log("relay exited normally");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log("relay error: " + ex);
+            return 1;
+        }
     }
 
     private static bool IsElevated()

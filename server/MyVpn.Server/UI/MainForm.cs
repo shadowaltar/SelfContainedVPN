@@ -25,6 +25,7 @@ public sealed class MainForm : Form
     private readonly Button _showPeer = new() { Text = "Show config / QR", AutoSize = true };
 
     private bool _refreshing;
+    private bool _endpointSeeded;
 
     public MainForm()
     {
@@ -41,6 +42,19 @@ public sealed class MainForm : Form
         _timer.Tick += async (_, _) => await RefreshEverythingAsync();
         _timer.Start();
         _ = RefreshEverythingAsync();
+        _ = ProbeAndLogAsync();
+        _ = AutoStartAsync();
+    }
+
+    /// <summary>Brings the server up automatically on launch when an endpoint is configured.</summary>
+    private async Task AutoStartAsync()
+    {
+        await Task.Delay(2000); // let the first status refresh seed the endpoint
+        if (_server.IsRunning || string.IsNullOrWhiteSpace(_endpoint.Text))
+            return;
+
+        AppendLog("Auto-starting the server...");
+        await StartServerAsync();
     }
 
     private void BuildUi()
@@ -152,6 +166,28 @@ public sealed class MainForm : Form
         RefreshGridRows();
     }
 
+    private string NextDefaultPeerName()
+    {
+        var used = _server.Peers.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var index = _server.Peers.Count + 1;
+        while (used.Contains($"device-{index}"))
+            index++;
+        return $"device-{index}";
+    }
+
+    private async Task ProbeAndLogAsync()
+    {
+        try
+        {
+            var probe = await Task.Run(WslVpnServer.Probe);
+            AppendLog(probe.Ok ? "WSL backend ready." : "WSL backend problem: " + probe.Message);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("WSL probe failed: " + ex.Message);
+        }
+    }
+
     private async Task StartServerAsync()
     {
         var endpoint = _endpoint.Text.Trim();
@@ -199,7 +235,7 @@ public sealed class MainForm : Form
 
     private void AddPeer()
     {
-        using var dialog = new AddPeerDialog($"device-{_server.Peers.Count + 1}");
+        using var dialog = new AddPeerDialog(NextDefaultPeerName());
         if (dialog.ShowDialog(this) != DialogResult.OK)
             return;
 
@@ -289,8 +325,11 @@ public sealed class MainForm : Form
         {
             await Task.Run(() => _server.RefreshStats());
             _publicKey.Text = _server.Config.Server.PublicKey;
-            if (!string.IsNullOrWhiteSpace(_server.Config.Server.PublicEndpoint) && !_endpoint.Focused)
+            if (!_endpointSeeded && !string.IsNullOrWhiteSpace(_server.Config.Server.PublicEndpoint))
+            {
                 _endpoint.Text = _server.Config.Server.PublicEndpoint;
+                _endpointSeeded = true;
+            }
             RefreshGridRows();
             UpdateUiState();
         }

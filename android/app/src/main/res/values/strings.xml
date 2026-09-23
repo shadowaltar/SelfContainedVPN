@@ -31,4 +31,6 @@
     <string name="need_key">Generate a key on this device first, then give its public key to the server.</string>
     <string name="open_vpn_settings">Open VPN settings (enable Always-on + Block)</string>
     <string name="open_vpn_settings_failed">Could not open the VPN settings screen.</string>
+    <string name="regen_title">Replace this device\'s key?</string>
+    <string name="regen_message">A key already exists. Replacing it will break any VPN peers that were added with the current public key - you will need to add this device again on the server.</string>
 </resources>

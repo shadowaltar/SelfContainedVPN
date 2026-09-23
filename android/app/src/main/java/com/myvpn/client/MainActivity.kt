@@ -201,6 +201,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun generateKey() {
+        if (!privateKeyBase64.isNullOrBlank()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.regen_title)
+                .setMessage(R.string.regen_message)
+                .setPositiveButton(R.string.generate_key) { _, _ -> doGenerateKey() }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        } else {
+            doGenerateKey()
+        }
+    }
+
+    private fun doGenerateKey() {
         try {
             val privateKey = KeyPair().privateKey.toBase64()
             privateKeyBase64 = privateKey

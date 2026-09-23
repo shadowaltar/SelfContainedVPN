@@ -14,10 +14,17 @@ public sealed class WslVpnServer : IDisposable
     private const string Distro = "Ubuntu";
     private const string Script = "/root/myvpn-server.sh";
 
+    /// <summary>
+    /// External host port the relay listens on. Not 51820 because Windows reserves 51800-51899
+    /// (Hyper-V/WSL), so the host cannot bind it; WSL still listens on 51820 internally.
+    /// </summary>
+    private const int RelayPort = 41820;
+
     private readonly ConfigStore _store;
     private readonly object _gate = new();
 
     private Process? _keepAlive;
+    private Process? _relay;
     private volatile bool _running;
     private volatile List<Peer> _peers = new();
 
@@ -61,10 +68,43 @@ public sealed class WslVpnServer : IDisposable
         }
     }
 
+    /// <summary>Checks that the WSL distro and the helper script exist; returns a clear message.</summary>
+    public static (bool Ok, string Message) Probe()
+    {
+        try
+        {
+            var distro = RunHost("wsl.exe", "-d", Distro, "-u", "root", "--", "true");
+            if (distro.ExitCode != 0)
+            {
+                return (false,
+                    $"WSL distro '{Distro}' is not available. Install it (wsl --install -d Ubuntu) and run " +
+                    "linux/myvpn-server.sh setup <endpoint> once.");
+            }
+
+            var script = RunHost("wsl.exe", "-d", Distro, "-u", "root", "--", "test", "-f", Script);
+            if (script.ExitCode != 0)
+            {
+                return (false,
+                    $"The Linux helper script is missing at {Script}. Copy linux/myvpn-server.sh into the distro " +
+                    "and run its setup once.");
+            }
+
+            return (true, "OK");
+        }
+        catch (Exception ex)
+        {
+            return (false, "WSL is not available: " + ex.Message);
+        }
+    }
+
     public void Start()
     {
         lock (_gate)
         {
+            var probe = Probe();
+            if (!probe.Ok)
+                throw new InvalidOperationException(probe.Message);
+
             if (!string.IsNullOrWhiteSpace(Config.Server.PublicEndpoint))
                 TryRunInWsl(Script, "set-endpoint", Config.Server.PublicEndpoint);
 
@@ -76,6 +116,7 @@ public sealed class WslVpnServer : IDisposable
                 throw new InvalidOperationException("Could not start wg0: " + (FirstError(start) ?? "unknown error"));
 
             StartKeepAlive();
+            StartRelay();
 
             for (var i = 0; i < 30; i++)
             {
@@ -106,6 +147,8 @@ public sealed class WslVpnServer : IDisposable
             TryRunInWsl("pkill", "-f", "sleep 2147483647");
             try { _keepAlive?.Kill(); } catch { /* ignore */ }
             _keepAlive = null;
+            try { _relay?.Kill(); } catch { /* ignore */ }
+            _relay = null;
             _running = false;
             Emit("Server stopped.");
         }
@@ -172,34 +215,37 @@ public sealed class WslVpnServer : IDisposable
 
     public void RefreshStats()
     {
-        var status = GetStatus();
-        _running = status.Up;
-        ApplyStatus(status);
-
-        var peers = new List<Peer>();
-        var dump = RunInWsl(Script, "dump");
-        foreach (var line in dump.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        lock (_gate)
         {
-            if (!line.StartsWith("PEER\t", StringComparison.Ordinal))
-                continue;
-            var f = line.Split('\t');
-            if (f.Length < 8)
-                continue;
+            var status = GetStatus();
+            _running = status.Up;
+            ApplyStatus(status);
 
-            var handshakeSeconds = long.TryParse(f[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hs) ? hs : 0;
-            peers.Add(new Peer
+            var peers = new List<Peer>();
+            var dump = RunInWsl(Script, "dump");
+            foreach (var line in dump.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
-                Name = f[1],
-                PublicKey = f[2],
-                TunnelAddress = f[3],
-                Enabled = string.Equals(f[4], "yes", StringComparison.OrdinalIgnoreCase),
-                LastHandshake = handshakeSeconds > 0 ? DateTimeOffset.FromUnixTimeSeconds(handshakeSeconds) : null,
-                TxBytes = long.TryParse(f[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out var tx) ? tx : 0,
-                RxBytes = long.TryParse(f[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out var rx) ? rx : 0,
-            });
-        }
+                if (!line.StartsWith("PEER\t", StringComparison.Ordinal))
+                    continue;
+                var f = line.Split('\t');
+                if (f.Length < 8)
+                    continue;
 
-        _peers = peers;
+                var handshakeSeconds = long.TryParse(f[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hs) ? hs : 0;
+                peers.Add(new Peer
+                {
+                    Name = f[1],
+                    PublicKey = f[2],
+                    TunnelAddress = f[3],
+                    Enabled = string.Equals(f[4], "yes", StringComparison.OrdinalIgnoreCase),
+                    LastHandshake = handshakeSeconds > 0 ? DateTimeOffset.FromUnixTimeSeconds(handshakeSeconds) : null,
+                    TxBytes = long.TryParse(f[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out var tx) ? tx : 0,
+                    RxBytes = long.TryParse(f[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out var rx) ? rx : 0,
+                });
+            }
+
+            _peers = peers;
+        }
     }
 
     public void Save() => _store.Save(Config);
@@ -253,6 +299,31 @@ public sealed class WslVpnServer : IDisposable
         psi.ArgumentList.Add("-lc");
         psi.ArgumentList.Add("exec sleep 2147483647");
         _keepAlive = Process.Start(psi);
+    }
+
+    /// <summary>
+    /// Starts the host-side UDP relay that forwards LAN clients into WSL (mirrored WSL networking
+    /// does not deliver external packets to WSL services).
+    /// </summary>
+    private void StartRelay()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe))
+            return;
+
+        var psi = new ProcessStartInfo(exe)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("--relay");
+        psi.ArgumentList.Add("--listen");
+        psi.ArgumentList.Add(RelayPort.ToString(CultureInfo.InvariantCulture));
+        psi.ArgumentList.Add("--target-port");
+        psi.ArgumentList.Add(Config.Server.ListenPort.ToString(CultureInfo.InvariantCulture));
+        _relay = Process.Start(psi);
     }
 
     private void TryRunInWsl(params string[] command)

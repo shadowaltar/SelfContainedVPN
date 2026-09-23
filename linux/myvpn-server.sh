@@ -19,6 +19,12 @@
 #
 set -euo pipefail
 
+# Keys and configs must never be group/world readable.
+umask 077
+
+# Keep key material and configs private (server key, client keys, wg0.conf).
+umask 077
+
 WG_IF="wg0"
 WG_PORT="51820"
 WG_SUBNET="10.8.0"
@@ -37,6 +43,12 @@ warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
 require_root() { [ "$(id -u)" -eq 0 ] || die "Run this as root (sudo)."; }
+
+# Client names are used as file names; reject anything that could escape the clients directory.
+validate_name() {
+  [ -n "${1:-}" ] || die "Client name is required."
+  [[ "$1" =~ ^[A-Za-z0-9_.-]+$ ]] || die "Name may only contain letters, digits, . _ -"
+}
 
 outbound_iface() {
   ip -4 route ls default 2>/dev/null | sed -n 's/.*dev \([^ ]*\).*/\1/p' | head -n1
@@ -130,7 +142,7 @@ cmd_add_client() {
   require_setup
   local name="${1:-}" pub="${2:-}"
   [ -n "$name" ] || die "Usage: $0 add-client NAME PUBKEY | NAME --generate"
-  [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || die "Name may only contain letters, digits, . _ -"
+  validate_name "$name"
   [ -f "$CLIENTS_DIR/$name.pub" ] && die "Client '$name' already exists."
 
   local ip
@@ -139,6 +151,7 @@ cmd_add_client() {
   if [ "$pub" = "--generate" ]; then
     warn "Generating the key pair on the server (the server will know this client's private key)."
     wg genkey | tee "$CLIENTS_DIR/$name.key" | wg pubkey > "$CLIENTS_DIR/$name.pub"
+    chmod 600 "$CLIENTS_DIR/$name.key"
     pub=$(cat "$CLIENTS_DIR/$name.pub")
   else
     [ -n "$pub" ] || die "Usage: $0 add-client NAME PUBKEY | NAME --generate"
@@ -158,6 +171,7 @@ cmd_add_client() {
 PublicKey = ${pub}
 AllowedIPs = ${ip}/32
 EOF
+  chmod 600 "$CONF_FILE"
 
   # Apply live without dropping the tunnel.
   wg set "$WG_IF" peer "$pub" allowed-ips "${ip}/32"
@@ -169,6 +183,7 @@ cmd_show_client() {
   require_root
   local name="${1:-}" png="${2:-}"
   [ -n "$name" ] || die "Usage: $0 show-client NAME [OUTPUT.png]"
+  validate_name "$name"
   [ -f "$CLIENTS_DIR/$name.pub" ] || die "No such client: $name"
 
   local ip server_pub endpoint client_priv
@@ -229,6 +244,7 @@ cmd_remove_client() {
   require_root
   local name="${1:-}"
   [ -n "$name" ] || die "Usage: $0 remove-client NAME"
+  validate_name "$name"
   [ -f "$CLIENTS_DIR/$name.pub" ] || die "No such client: $name"
 
   local pub
@@ -244,6 +260,7 @@ cmd_remove_client() {
         if (lines[i] == "# " name) next;
       print;
     }' "$CONF_FILE" > "$CONF_FILE.tmp" && mv "$CONF_FILE.tmp" "$CONF_FILE"
+  chmod 600 "$CONF_FILE"
 
   rm -f "$CLIENTS_DIR/$name.pub" "$CLIENTS_DIR/$name.ip" "$CLIENTS_DIR/$name.key"
   log "Removed client '$name'."
