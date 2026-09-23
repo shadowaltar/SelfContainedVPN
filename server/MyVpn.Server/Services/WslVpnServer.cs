@@ -27,6 +27,8 @@ public sealed class WslVpnServer : IDisposable
     private Process? _relay;
     private volatile bool _running;
     private volatile List<Peer> _peers = new();
+    private readonly Dictionary<string, (long Rx, long Tx)> _prevBytes = new();
+    private DateTime _lastSample = DateTime.UtcNow;
 
     public WslVpnServer(ConfigStore store)
     {
@@ -221,7 +223,13 @@ public sealed class WslVpnServer : IDisposable
             _running = status.Up;
             ApplyStatus(status);
 
+            var now = DateTime.UtcNow;
+            var elapsed = (now - _lastSample).TotalSeconds;
+            if (elapsed <= 0.1)
+                elapsed = 1.0;
+
             var peers = new List<Peer>();
+            var relayMap = ReadRelayClientMap();
             var dump = RunInWsl(Script, "dump");
             foreach (var line in dump.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -232,6 +240,30 @@ public sealed class WslVpnServer : IDisposable
                     continue;
 
                 var handshakeSeconds = long.TryParse(f[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hs) ? hs : 0;
+                var rx = long.TryParse(f[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out var r) ? r : 0;
+                var tx = long.TryParse(f[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out var t) ? t : 0;
+                var endpoint = f.Length > 8 ? f[8] : "";
+                if (!string.IsNullOrEmpty(endpoint))
+                {
+                    // The WG server sees the relay's source, not the client's; map the port back.
+                    var colon = endpoint.LastIndexOf(':');
+                    if (colon > 0 && int.TryParse(endpoint[(colon + 1)..], out var epPort) &&
+                        relayMap.TryGetValue(epPort, out var realIp))
+                    {
+                        endpoint = realIp;
+                    }
+                }
+
+                double down = 0, up = 0;
+                if (_prevBytes.TryGetValue(f[2], out var prev))
+                {
+                    var dRx = rx - prev.Rx;
+                    var dTx = tx - prev.Tx;
+                    down = (dTx > 0 ? dTx : 0) / elapsed;   // server Tx = peer's download
+                    up = (dRx > 0 ? dRx : 0) / elapsed;      // server Rx = peer's upload
+                }
+                _prevBytes[f[2]] = (rx, tx);
+
                 peers.Add(new Peer
                 {
                     Name = f[1],
@@ -239,11 +271,15 @@ public sealed class WslVpnServer : IDisposable
                     TunnelAddress = f[3],
                     Enabled = string.Equals(f[4], "yes", StringComparison.OrdinalIgnoreCase),
                     LastHandshake = handshakeSeconds > 0 ? DateTimeOffset.FromUnixTimeSeconds(handshakeSeconds) : null,
-                    TxBytes = long.TryParse(f[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out var tx) ? tx : 0,
-                    RxBytes = long.TryParse(f[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out var rx) ? rx : 0,
+                    TxBytes = tx,
+                    RxBytes = rx,
+                    Endpoint = endpoint,
+                    DownloadBytesPerSecond = down,
+                    UploadBytesPerSecond = up,
                 });
             }
 
+            _lastSample = now;
             _peers = peers;
         }
     }
@@ -258,6 +294,29 @@ public sealed class WslVpnServer : IDisposable
     public void LogLines(string prefix) => Emit(prefix);
 
     // ----- internals -----
+
+    private static Dictionary<int, string> ReadRelayClientMap()
+    {
+        var result = new Dictionary<int, string>();
+        try
+        {
+            var path = Path.Combine(Path.GetTempPath(), "myvpn-relay-clients.tsv");
+            if (File.Exists(path))
+            {
+                foreach (var line in File.ReadAllLines(path))
+                {
+                    var parts = line.Split('\t');
+                    if (parts.Length == 2 && int.TryParse(parts[0], out var port))
+                        result[port] = parts[1];
+                }
+            }
+        }
+        catch
+        {
+            // best effort
+        }
+        return result;
+    }
 
     private void ApplyStatus(ServerStatus status)
     {

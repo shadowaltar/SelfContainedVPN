@@ -15,6 +15,29 @@ internal static class UdpRelay
 {
     private const string Distro = "Ubuntu";
 
+    /// <summary>Maps an upstream socket's local port to the real client IP, so the GUI can show it.</summary>
+    private static readonly ConcurrentDictionary<int, string> ClientIps = new();
+    private static readonly object WriteLock = new();
+
+    public static string MapPath => Path.Combine(Path.GetTempPath(), "myvpn-relay-clients.tsv");
+
+    private static void RecordClient(int upstreamPort, string clientIp)
+    {
+        if (upstreamPort <= 0)
+            return;
+        ClientIps[upstreamPort] = clientIp;
+        try
+        {
+            var text = string.Join('\n', ClientIps.Select(kv => $"{kv.Key}\t{kv.Value}"));
+            lock (WriteLock)
+                File.WriteAllText(MapPath, text);
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
     public static async Task RunAsync(int listenPort, int targetPort, CancellationToken token, Action<string>? log = null)
     {
         using var listener = new UdpClient(new IPEndPoint(IPAddress.Any, listenPort));
@@ -94,6 +117,8 @@ internal static class UdpRelay
             {
                 _upstream = new UdpClient();
                 _upstream.Connect(new IPEndPoint(ip, targetPort));
+                if (_upstream.Client.LocalEndPoint is IPEndPoint local)
+                    RecordClient(local.Port, client.Address.ToString());
                 _ = PumpAsync();
             }
         }

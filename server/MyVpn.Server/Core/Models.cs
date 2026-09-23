@@ -54,6 +54,13 @@ public sealed class Peer
     [JsonIgnore] public long TxBytes { get; set; }
     [JsonIgnore] public DateTimeOffset? LastHandshake { get; set; }
 
+    /// <summary>Remote endpoint (ip:port) the peer is connecting from, as seen by the server.</summary>
+    [JsonIgnore] public string Endpoint { get; set; } = "";
+
+    /// <summary>Current transfer rate in bytes/second, computed between refreshes.</summary>
+    [JsonIgnore] public double DownloadBytesPerSecond { get; set; }
+    [JsonIgnore] public double UploadBytesPerSecond { get; set; }
+
     [JsonIgnore]
     public bool Online =>
         LastHandshake.HasValue && DateTimeOffset.UtcNow - LastHandshake.Value < TimeSpan.FromMinutes(3);

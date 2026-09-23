@@ -122,14 +122,16 @@ public sealed class MainForm : Form
         _grid.SelectionChanged += (_, _) => UpdateUiState();
         _grid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowSelectedPeer(); };
 
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "name", HeaderText = "Name", FillWeight = 90 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "name", HeaderText = "Name", FillWeight = 85 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "address", HeaderText = "Tunnel IP", FillWeight = 70 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "enabled", HeaderText = "State", FillWeight = 55 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "online", HeaderText = "Connection", FillWeight = 75 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "download", HeaderText = "Download", FillWeight = 70 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "upload", HeaderText = "Upload", FillWeight = 70 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "handshake", HeaderText = "Last handshake", FillWeight = 90 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "key", HeaderText = "Public key", FillWeight = 170 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "remote", HeaderText = "Remote IP", FillWeight = 80 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "enabled", HeaderText = "State", FillWeight = 50 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "online", HeaderText = "Connection", FillWeight = 70 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "download", HeaderText = "Download", FillWeight = 65 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "upload", HeaderText = "Upload", FillWeight = 65 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "speed", HeaderText = "Speed (↓/↑)", FillWeight = 110 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "handshake", HeaderText = "Last handshake", FillWeight = 85 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "key", HeaderText = "Public key", FillWeight = 150 });
 
         // ---- log ----
         var logPanel = new GroupBox { Text = "Log", Dock = DockStyle.Fill, Padding = new Padding(6) };
@@ -353,10 +355,12 @@ public sealed class MainForm : Form
             var index = _grid.Rows.Add(
                 peer.Name,
                 peer.TunnelAddress,
+                FormatEndpoint(peer.Endpoint),
                 peer.Enabled ? "Enabled" : "Disabled",
                 _server.IsRunning ? (peer.Online ? "Online" : "Offline") : "-",
                 FormatBytes(peer.TxBytes),
                 FormatBytes(peer.RxBytes),
+                FormatRate(peer),
                 FormatHandshake(peer.LastHandshake),
                 peer.PublicKey);
 
@@ -443,6 +447,28 @@ public sealed class MainForm : Form
         }
 
         _log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+    }
+
+    private static string FormatEndpoint(string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint) || endpoint == "(none)")
+            return "-";
+
+        if (endpoint.StartsWith('['))
+        {
+            var end = endpoint.IndexOf(']');
+            return end > 1 ? endpoint[1..end] : endpoint;
+        }
+
+        var colon = endpoint.LastIndexOf(':');
+        return colon > 0 && endpoint.IndexOf(':') == colon ? endpoint[..colon] : endpoint;
+    }
+
+    private static string FormatRate(Peer peer)
+    {
+        if (peer.DownloadBytesPerSecond < 1 && peer.UploadBytesPerSecond < 1)
+            return "-";
+        return $"↓ {FormatBytes((long)peer.DownloadBytesPerSecond)}/s   ↑ {FormatBytes((long)peer.UploadBytesPerSecond)}/s";
     }
 
     private static string FormatBytes(long bytes)

@@ -293,7 +293,7 @@ cmd_dump() {
   local -A LIVE=()
   local pub psk ep aips hs rx tx ka
   while IFS=$'\t' read -r pub psk ep aips hs rx tx ka; do
-    [ -n "$pub" ] && LIVE["$pub"]="${hs}|${rx}|${tx}"
+    [ -n "$pub" ] && LIVE["$pub"]="${hs}|${rx}|${tx}|${ep}"
   done < <(wg show "$WG_IF" dump 2>/dev/null | tail -n +2)
 
   local f n ip enabled
@@ -303,12 +303,12 @@ cmd_dump() {
     pub=$(cat "$f")
     ip=$(cat "$CLIENTS_DIR/$n.ip" 2>/dev/null)
     if [ -n "${LIVE[$pub]:-}" ]; then
-      IFS='|' read -r hs rx tx <<< "${LIVE[$pub]}"
+      IFS='|' read -r hs rx tx ep <<< "${LIVE[$pub]}"
       enabled=yes
     else
-      hs=0; rx=0; tx=0; enabled=no
+      hs=0; rx=0; tx=0; ep=""; enabled=no
     fi
-    printf 'PEER\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$pub" "$ip" "$enabled" "$hs" "$rx" "$tx"
+    printf 'PEER\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$pub" "$ip" "$enabled" "$hs" "$rx" "$tx" "$ep"
   done
 }
 
